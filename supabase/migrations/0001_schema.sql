@@ -192,10 +192,14 @@ begin
     select quantidade into v_saldo from estoque
       where produto_id = (v_item->>'produto_id')::uuid and cd_id = p_cd for update;
     if coalesce(v_saldo,0) < v_qtd then
-      raise exception 'Estoque insuficiente para o produto %', v_item->>'produto_id';
+      raise exception 'Estoque insuficiente para %: disponível % un.',
+        (select nome from produtos where id = (v_item->>'produto_id')::uuid), coalesce(v_saldo,0);
     end if;
 
     v_preco := preco_no_cd((v_item->>'produto_id')::uuid, p_cd);
+    if v_preco is null then
+      raise exception 'Produto sem preço cadastrado: %', (select nome from produtos where id = (v_item->>'produto_id')::uuid);
+    end if;
     insert into pedido_itens values (v_pedido, (v_item->>'produto_id')::uuid, v_qtd, v_preco);
     update estoque set quantidade = quantidade - v_qtd, atualizado_em = now()
       where produto_id = (v_item->>'produto_id')::uuid and cd_id = p_cd;
