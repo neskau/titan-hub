@@ -84,9 +84,9 @@ select d.*, c.nome from bling_depositos d join cds c on c.id = d.cd_id;
 
 ## 6. Sincronização automática
 
-O arquivo `vercel.json` agenda uma chamada a `/api/bling/sync` a cada 30 minutos. Ela atualiza primeiro os produtos e depois o estoque. A Vercel envia o `CRON_SECRET` sozinha.
+O arquivo `vercel.json` agenda uma chamada a `/api/bling/sync` **uma vez por dia, às 6h de Brasília** (`0 9 * * *`, porque a Vercel usa horário UTC). Ela atualiza primeiro os produtos e depois o estoque. A Vercel envia o `CRON_SECRET` sozinha.
 
-> **Plano gratuito (Hobby) da Vercel:** o agendamento só pode rodar **uma vez por dia**, e o deploy pode ser recusado com `*/30`. Nesse caso, há duas saídas: mudar o `schedule` do `vercel.json` para `0 9 * * *` (todo dia às 6h de Brasília; o horário da Vercel é UTC) ou passar para o plano Pro. Outra opção é usar um serviço externo gratuito, como cron-job.org, chamando a URL com o cabeçalho abaixo.
+> **Quer atualizar mais vezes ao dia?** O plano gratuito (Hobby) da Vercel só permite uma execução diária. Para rodar a cada 30 minutos, há duas saídas: passar para o plano Pro e trocar o `schedule` por `*/30 * * * *`, ou usar um serviço externo gratuito, como cron-job.org, chamando a URL com o cabeçalho abaixo.
 
 **Rodar na mão** (para testar):
 

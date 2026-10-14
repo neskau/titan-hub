@@ -4,8 +4,6 @@ import { supabaseAdmin } from "../supabase/admin";
 import { blingFetch, blingListarTudo } from "./cliente";
 import {
   agregarSaldos,
-  chaveEstoque,
-  diferencasEstoque,
   montarContato,
   montarPedido,
   numeroLojaTitan,
@@ -185,33 +183,21 @@ export async function sincronizarEstoque(): Promise<{ contadores: Contadores; me
   }
   const novos = agregarSaldos(saldos, depositoParaCd, produtoPorBlingId);
 
-  const cds = Array.from(new Set(mapa.map((m) => m.cd_id)));
-  const atuaisLinhas = await lerTudo<{ produto_id: string; cd_id: string; quantidade: number }>(
-    sb,
-    "estoque",
-    "produto_id, cd_id, quantidade",
-    (q) => q.in("cd_id", cds)
-  );
-  const atuais = new Map(atuaisLinhas.map((l) => [chaveEstoque(l.produto_id, l.cd_id), Number(l.quantidade)]));
-  const mudancas = diferencasEstoque(novos, atuais);
-
-  const agora = new Date().toISOString();
-  for (const lote of emLotes(mudancas, 500)) {
-    const { error } = await sb.from("estoque").upsert(
-      lote.map((m) => ({ produto_id: m.produto_id, cd_id: m.cd_id, quantidade: m.quantidade, atualizado_em: agora })),
-      { onConflict: "produto_id,cd_id" }
-    );
+  // Aplicado no banco (função aplicar_estoque_bling): trava cada linha, desconta pedidos do Titan
+  // ainda não enviados ao Bling e grava o movimento com o delta real. Ler-calcular-gravar aqui
+  // apagaria pedidos fechados durante a sincronização.
+  const saldosNovos = Array.from(novos, ([k, quantidade]) => {
+    const [produto_id, cd_id] = k.split("|");
+    return { produto_id, cd_id, quantidade };
+  });
+  let alterados = 0;
+  for (const lote of emLotes(saldosNovos, 500)) {
+    const { data, error } = await sb.rpc("aplicar_estoque_bling", { p_saldos: lote });
     if (error) throw new Error(`Falha ao gravar estoque: ${error.message}`);
-    const movs = lote
-      .filter((m) => m.delta !== 0)
-      .map((m) => ({ produto_id: m.produto_id, cd_id: m.cd_id, delta: m.delta, motivo: "sync_bling", referencia: "bling" }));
-    if (movs.length) {
-      const { error: e2 } = await sb.from("movimentos_estoque").insert(movs);
-      if (e2) throw new Error(`Falha ao gravar movimentos de estoque: ${e2.message}`);
-    }
+    alterados += Number(data ?? 0);
   }
 
-  return { contadores: { produtos: produtoPorBlingId.size, saldos_lidos: saldos.length, alterados: mudancas.length } };
+  return { contadores: { produtos: produtoPorBlingId.size, saldos_lidos: saldos.length, alterados } };
 }
 
 // ---------------- Pedido ----------------
@@ -219,6 +205,7 @@ export async function sincronizarEstoque(): Promise<{ contadores: Contadores; me
 interface PedidoCompleto {
   id: string;
   numero: number;
+  status: string;
   criado_em: string;
   cd_id: string;
   pagamento: string;
@@ -261,7 +248,7 @@ export async function enviarPedido(pedidoId: string) {
   const { data: p, error } = await sb
     .from("pedidos")
     .select(
-      "id, numero, criado_em, cd_id, pagamento, frete, cep_entrega, observacao, bling_pedido_id," +
+      "id, numero, status, criado_em, cd_id, pagamento, frete, cep_entrega, observacao, bling_pedido_id," +
         " empresa:empresas!inner(id, cnpj, razao_social, nome_fantasia, cidade, uf, telefone, bling_contato_id)," +
         " pedido_itens(quantidade, preco_unitario, produto:produtos(sku, nome, unidade, bling_produto_id))"
     )
@@ -269,6 +256,7 @@ export async function enviarPedido(pedidoId: string) {
     .maybeSingle<PedidoCompleto>();
   if (error) throw new Error(`Falha ao ler o pedido: ${error.message}`);
   if (!p) throw new Error("Pedido não encontrado");
+  if (p.status === "cancelado" && !p.bling_pedido_id) throw new Error("Pedido cancelado não pode ser enviado ao Bling");
   if (p.bling_pedido_id) {
     return { contadores: { enviados: 0 }, mensagem: "Pedido já estava no Bling", bling_pedido_id: Number(p.bling_pedido_id) };
   }

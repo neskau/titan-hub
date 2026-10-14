@@ -25,7 +25,8 @@ export async function obterSessao(): Promise<Sessao | null> {
     const { data } = await sb.from("empresas").select("*").eq("id", perfil.empresa_id).single<Empresa>();
     empresa = data ?? null;
     if (empresa?.vendedora_id) {
-      const { data: v } = await sb.from("perfis").select("nome, telefone").eq("id", empresa.vendedora_id).single();
+      // A RLS de perfis só mostra o próprio perfil ao integrador: a função expõe só nome e telefone.
+      const { data: v } = await sb.rpc("minha_vendedora").maybeSingle<Pick<Perfil, "nome" | "telefone">>();
       vendedora = v ?? null;
     }
   }

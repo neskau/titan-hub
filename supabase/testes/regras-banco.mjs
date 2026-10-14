@@ -27,7 +27,7 @@ grant usage on schema storage to anon, authenticated, service_role;
 `;
 await c.query(stub);
 
-const arquivos = ["migrations/0001_schema.sql", "migrations/0002_gestao.sql", "migrations/0003_bling.sql", "seed.sql"];
+const arquivos = ["migrations/0001_schema.sql", "migrations/0002_gestao.sql", "migrations/0003_bling.sql", "migrations/0004_revisao.sql", "seed.sql"];
 for (const a of arquivos) {
   try { await c.query(fs.readFileSync(`${RAIZ}/${a}`, "utf8")); console.log("OK   ", a); }
   catch (e) { console.log("ERRO ", a, "→", e.message); await c.end();  process.exit(1); }
@@ -96,6 +96,41 @@ ok((await c.query("select count(*)::int n from movimentos_estoque where motivo='
 
 console.log("\nBling");
 await espera_erro(() => como(U.gest, "select * from integracao_bling"), "tokens do Bling inacessíveis até para gestor");
+
+console.log("\nRevisão (0004)");
+await espera_erro(() => como(null, "select preco_no_cd($1,'cascavel')", [m620]), "visitante não lê preço pela função preco_no_cd");
+await espera_erro(() => como(U.outro, "select preco_no_cd($1,'cascavel')", [m620]), "usuário sem empresa aprovada não lê preço pela função");
+const pedF = (await como(U.int, "select criar_pedido('cascavel','pix',$1::jsonb,'85900000',null,-5000) id", [JSON.stringify([{ produto_id: m620, quantidade: 1 }])])).rows[0].id;
+const pf = (await c.query("select subtotal, frete, total from pedidos where id=$1", [pedF])).rows[0];
+ok(Number(pf.frete) === 0 && Number(pf.total) === Number(pf.subtotal), `frete enviado pelo cliente é ignorado (total R$ ${pf.total})`);
+await espera_erro(() => como(U.int, "select criar_pedido('cascavel','pix',null,'85900000',null,0)"), "itens nulos não criam pedido vazio");
+await c.query("update produtos set ativo=false where id=$1", [m620]);
+await espera_erro(() => como(U.int, "select criar_pedido('cascavel','pix',$1::jsonb,'85900000',null,0)", [JSON.stringify([{ produto_id: m620, quantidade: 1 }])]), "produto inativo não é vendido");
+await c.query("update produtos set ativo=true where id=$1", [m620]);
+await c.query("update perfis set ativo=false where id=$1", [U.int]);
+await espera_erro(() => como(U.int, "select criar_pedido('cascavel','pix',$1::jsonb,'85900000',null,0)", [JSON.stringify([{ produto_id: m620, quantidade: 1 }])]), "integrador desativado não compra");
+ok((await como(U.int, "select count(*)::int n from precos")).rows[0].n === 0, "integrador desativado não vê preço");
+await c.query("update perfis set ativo=true where id=$1", [U.int]);
+await c.query("update perfis set ativo=false where id=$1", [U.gest]);
+const promo = await como(U.gest, "update perfis set papel='gestor' where id=$1", [U.outro]);
+ok(promo.rowCount === 0, "gestor desativado não promove ninguém");
+await c.query("update perfis set ativo=true where id=$1", [U.gest]);
+await espera_erro(() => como(U.vend, "update pedidos set status='cancelado' where id=$1", [pedF]), "vendedora não cancela pelo update direto (sem devolver estoque)");
+await espera_erro(() => como(U.vend, "update pedidos set status='entregue' where id=$1", [pedF]), "não pula etapas do pedido");
+await espera_erro(() => como(U.vend, "update pedidos set total=1 where id=$1", [pedF]), "equipe não altera o total por fora do frete");
+await espera_erro(() => como(U.vend, "update pedidos set status='recebido' where id=$1", [ped]), "pedido cancelado não é reaberto");
+ok((await como(U.vend, "update pedidos set status='faturado' where id=$1", [pedF])).rowCount === 1, "equipe avança o pedido para a próxima etapa");
+ok((await como(U.vend, "update pedidos set frete=150, total=subtotal+150, rastreio='BR1' where id=$1", [pedF])).rowCount === 1, "equipe grava frete e rastreio");
+ok((await como(U.gest, "delete from perfis where id=$1", [U.vend])).rowCount === 0, "gestor não apaga perfis pela API");
+await espera_erro(() => como(U.outro, "select cadastrar_empresa('123','X LTDA',null,'Toledo','PR','45999990000','Residencial')"), "CNPJ inválido recusado pela função");
+await espera_erro(() => como(U.vend, "select cadastrar_empresa('22333444000155','Y LTDA',null,'Toledo','PR','45999990000','Residencial')"), "equipe não se vincula a empresa integradora");
+ok((await como(U.int, "select * from minha_vendedora()")).rows[0]?.nome === "vend", "integrador vê nome/telefone da vendedora responsável");
+await espera_erro(() => como(U.gest, "select aplicar_estoque_bling('[]'::jsonb)"), "só a chave de serviço aplica o estoque do Bling");
+// Bling diz 300 em Cascavel; o pedido pedF (1 un., ainda não enviado ao Bling) precisa continuar descontado.
+await c.query("set role service_role");
+await c.query("select aplicar_estoque_bling($1::jsonb)", [JSON.stringify([{ produto_id: m620, cd_id: "cascavel", quantidade: 300 }])]);
+await c.query("reset role");
+ok((await c.query("select quantidade from estoque where produto_id=$1 and cd_id='cascavel'", [m620])).rows[0].quantidade === 299, "sync do Bling desconta pedidos do Titan ainda não enviados");
 
 console.log(falhas === 0 ? "\nTODOS OS TESTES PASSARAM" : `\n${falhas} FALHA(S)`);
 await c.end();

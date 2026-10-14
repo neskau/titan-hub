@@ -20,7 +20,7 @@ export function mapearProduto(p: BlingProduto): ProdutoDoBling | null {
   if (!sku) return null;
   if (p.tipo && p.tipo !== "P") return null; // serviços etc.
   if (p.formato === "V") return null; // pai de variações: as variações vêm como produtos próprios
-  const preco = typeof p.preco === "number" && Number.isFinite(p.preco) && p.preco >= 0 ? round2(p.preco) : null;
+  const preco = typeof p.preco === "number" && Number.isFinite(p.preco) && p.preco > 0 ? round2(p.preco) : null; // 0 = sem preço no Bling
   return {
     bling_produto_id: p.id,
     sku,

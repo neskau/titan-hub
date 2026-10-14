@@ -2,7 +2,8 @@ import type { Papel } from "@/lib/tipos";
 
 /** Caminho interno seguro (evita redirecionamento aberto para outro site). */
 export function caminhoSeguro(v: string | null | undefined): string | null {
-  if (!v || !v.startsWith("/") || v.startsWith("//") || v.startsWith("/\\")) return null;
+  // eslint-disable-next-line no-control-regex -- tab/quebra de linha somem na URL e "/\t/x.com" viraria "//x.com"
+  if (!v || !v.startsWith("/") || v.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(v)) return null;
   return v;
 }
 
