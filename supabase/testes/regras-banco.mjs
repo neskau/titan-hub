@@ -27,7 +27,7 @@ grant usage on schema storage to anon, authenticated, service_role;
 `;
 await c.query(stub);
 
-const arquivos = ["migrations/0001_schema.sql", "migrations/0002_gestao.sql", "migrations/0003_bling.sql", "migrations/0004_revisao.sql", "seed.sql"];
+const arquivos = ["migrations/0001_schema.sql", "migrations/0002_gestao.sql", "migrations/0003_bling.sql", "migrations/0004_revisao.sql", "migrations/0005_crm.sql", "seed.sql"];
 for (const a of arquivos) {
   try { await c.query(fs.readFileSync(`${RAIZ}/${a}`, "utf8")); console.log("OK   ", a); }
   catch (e) { console.log("ERRO ", a, "→", e.message); await c.end();  process.exit(1); }
@@ -69,7 +69,7 @@ const mudou = await como(U.int, "update empresas set status='aprovada' where id=
 ok(mudou.rowCount === 0, "integrador não aprova a própria empresa");
 
 console.log("\nAprovação pela equipe");
-await como(U.vend, "update empresas set status='aprovada', vendedora_id=$2 where id=$1", [emp, U.vend]);
+await como(U.gest, "update empresas set status='aprovada', vendedora_id=$2 where id=$1", [emp, U.vend]);
 ok((await como(U.int, "select count(*)::int n from precos")).rows[0].n > 0, "aprovado passa a ver preço");
 await espera_erro(() => como(U.vend, "update empresas set status='bloqueada' where id=$1", [emp]), "vendedora não bloqueia empresa");
 
@@ -131,6 +131,47 @@ await c.query("set role service_role");
 await c.query("select aplicar_estoque_bling($1::jsonb)", [JSON.stringify([{ produto_id: m620, cd_id: "cascavel", quantidade: 300 }])]);
 await c.query("reset role");
 ok((await c.query("select quantidade from estoque where produto_id=$1 and cd_id='cascavel'", [m620])).rows[0].quantidade === 299, "sync do Bling desconta pedidos do Titan ainda não enviados");
+
+console.log("\nCRM: carteira, oportunidades e cadastro pela equipe");
+const V2 = "00000000-0000-0000-0000-000000000005", NOVO = "00000000-0000-0000-0000-000000000006", INT2 = "00000000-0000-0000-0000-000000000007";
+for (const [id, nome] of [[V2, "vend2"], [NOVO, "novo"], [INT2, "int2"]]) await c.query("insert into auth.users values ($1, $2, $3)", [id, `${nome}@teste.com`, { nome }]);
+await c.query("update perfis set papel='vendedora' where id=$1", [V2]);
+ok((await como(U.vend, "select count(*)::int n from empresas where id=$1", [emp])).rows[0].n === 1, "vendedora vê a empresa da própria carteira");
+ok((await como(V2, "select count(*)::int n from empresas where id=$1", [emp])).rows[0].n === 0, "outra vendedora não vê empresa fora da carteira");
+ok((await como(V2, "select count(*)::int n from pedidos")).rows[0].n === 0, "outra vendedora não vê pedidos fora da carteira");
+await espera_erro(() => como(V2, "select cancelar_pedido($1)", [pedF]), "vendedora não cancela pedido de outra carteira");
+const emp2 = (await como(INT2, "select cadastrar_empresa('22.333.444/0001-55','Raio Sul Energia LTDA','Raio Sul','Pato Branco','PR','46999990000','Agro') id")).rows[0].id;
+const op2 = (await c.query("select id, vendedora_id, origem from oportunidades where empresa_id=$1", [emp2])).rows[0];
+ok(op2 && op2.vendedora_id === null && op2.origem === "portal", "cadastro no site vira oportunidade 'portal' sem dona");
+ok((await como(U.vend, "select count(*)::int n from oportunidades where id=$1", [op2.id])).rows[0].n === 0, "vendedora não vê lead ainda não distribuído");
+ok((await como(U.gest, "select count(*)::int n from oportunidades where id=$1", [op2.id])).rows[0].n === 1, "gestor vê lead novo para distribuir");
+await espera_erro(() => como(U.vend, "update empresas set vendedora_id=$2 where id=$1", [emp, V2]), "vendedora não passa a carteira para outra");
+await como(U.gest, "update empresas set vendedora_id=$2, status='aprovada' where id=$1", [emp2, V2]);
+ok((await c.query("select vendedora_id from oportunidades where id=$1", [op2.id])).rows[0].vendedora_id === V2, "ao distribuir a empresa, a oportunidade vai junto");
+await espera_erro(() => como(V2, "update oportunidades set vendedora_id=$2 where id=$1", [op2.id, U.vend]), "vendedora não transfere oportunidade");
+const opM = (await como(U.vend, "insert into oportunidades (titulo, vendedora_id, valor_estimado, origem, cidade) values ('Solar Toledo', $1, 85000, 'indicacao', 'Toledo') returning id", [U.vend])).rows[0].id;
+ok(!!opM, "vendedora cria oportunidade manual para si");
+await espera_erro(() => como(U.vend, "insert into oportunidades (titulo, vendedora_id) values ('Errado', $1)", [V2]), "vendedora não cria oportunidade na carteira de outra");
+await espera_erro(() => como(U.vend, "update oportunidades set etapa='perdido' where id=$1", [opM]), "perda exige motivo");
+await como(U.vend, "update oportunidades set etapa='perdido', motivo_perda='Preço' where id=$1", [opM]);
+ok((await c.query("select count(*)::int n from atividades where oportunidade_id=$1 and tipo='sistema'", [opM])).rows[0].n === 1, "mudança de etapa registrada na linha do tempo");
+ok((await como(U.vend, "insert into atividades (oportunidade_id, tipo, descricao, autor_id) values ($1,'nota','Ligou pedindo prazo',$2) returning id", [opM, U.vend])).rowCount === 1, "vendedora registra nota na própria oportunidade");
+await espera_erro(() => como(U.vend, "insert into atividades (oportunidade_id, tipo, descricao, autor_id) values ($1,'sistema','falso',$2)", [opM, U.vend]), "ninguém forja registro do sistema");
+await espera_erro(() => como(V2, "insert into atividades (oportunidade_id, tipo, descricao, autor_id) values ($1,'nota','x',$2)", [opM, V2]), "outra vendedora não escreve em oportunidade alheia");
+const empN = (await como(U.vend, "select equipe_cadastrar_integrador($1,'33.444.555/0001-81','Lumen Instalações LTDA','Lumen','Umuarama','PR','44999990000','Residencial','piracicaba') id", [NOVO])).rows[0].id;
+const eN = (await c.query("select status, vendedora_id, cd_padrao from empresas where id=$1", [empN])).rows[0];
+ok(eN.status === "aprovada" && eN.vendedora_id === U.vend && eN.cd_padrao === "piracicaba", "vendedora cadastra integrador já aprovado na carteira dela");
+ok((await como(NOVO, "select count(*)::int n from precos")).rows[0].n > 0, "integrador cadastrado pela vendedora já vê preço");
+ok((await c.query("select count(*)::int n from oportunidades where empresa_id=$1", [empN])).rows[0].n === 0, "cadastro pela equipe não cria lead de distribuição");
+await c.query("insert into auth.users values ('00000000-0000-0000-0000-000000000008','x@teste.com','{}')");
+await espera_erro(() => como(V2, "select equipe_cadastrar_integrador('00000000-0000-0000-0000-000000000008','11.222.333/0001-81','Sol Forte',null,'Toledo','PR','1','Residencial')"), "CNPJ de outra carteira é recusado");
+await espera_erro(() => como(U.vend, "select equipe_cadastrar_integrador($1,'44555666000177','Outra LTDA',null,'X','PR','1','Agro')", [V2]), "não vincula membro da equipe como integrador");
+await espera_erro(() => como(U.int, "select equipe_cadastrar_integrador('00000000-0000-0000-0000-000000000008','44555666000177','Outra LTDA',null,'X','PR','1','Agro')"), "integrador não usa a função da equipe");
+ok((await como(U.vend, "select * from desempenho_equipe(current_date)")).rows.length === 1, "vendedora vê só o próprio desempenho");
+ok((await como(U.gest, "select * from desempenho_equipe(current_date)")).rows.length >= 3, "gestor vê o desempenho da equipe");
+await espera_erro(() => como(U.vend, "insert into metas values ($1, date_trunc('month', current_date)::date, 999999)", [U.vend]), "vendedora não define a própria meta");
+ok((await como(U.gest, "insert into metas values ($1, date_trunc('month', current_date)::date, 500000) returning vendedora_id", [U.vend])).rowCount === 1, "gestor define meta");
+ok((await c.query("select count(*)::int n from atividades where empresa_id=$1 and descricao like 'Pedido #%'", [emp])).rows[0].n >= 1, "pedido aparece na linha do tempo da empresa");
 
 console.log(falhas === 0 ? "\nTODOS OS TESTES PASSARAM" : `\n${falhas} FALHA(S)`);
 await c.end();
