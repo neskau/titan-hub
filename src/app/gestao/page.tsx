@@ -13,8 +13,22 @@ import {
 import { brl, num } from "@/lib/formato";
 import { supabaseServidor } from "@/lib/supabase/server";
 import type { StatusPedido } from "@/lib/tipos";
+import { BarraMeta } from "@/components/gestao/crm/BarraMeta";
+import { BotaoConcluir } from "@/components/gestao/crm/BotaoConcluir";
+import { ETAPAS_ABERTAS, hojeSP, horaSP, diaSP, pct, situacaoRitmo } from "@/components/gestao/crm/constantes";
+import { atingido, carregarDesempenho } from "@/components/gestao/crm/desempenho";
+import { ehGestor } from "@/components/gestao/crm/servidor";
 
 export const metadata = { title: "Dashboard · Gestão · Titan" };
+
+interface TarefaResumo {
+  id: string;
+  descricao: string;
+  vencimento: string;
+  concluida: boolean;
+  oportunidades: { id: string; titulo: string } | null;
+  empresas: { id: string; razao_social: string; nome_fantasia: string | null } | null;
+}
 
 interface PedidoResumo {
   id: string;
@@ -27,7 +41,8 @@ interface PedidoResumo {
 }
 
 export default async function Dashboard({ searchParams }: { searchParams: { de?: string; ate?: string; cd?: string } }) {
-  await sessaoGestao();
+  const s = await sessaoGestao();
+  const gestor = ehGestor(s);
   const sb = supabaseServidor();
   const cds = await listarCdsGestao();
   const padrao = periodoPadrao();
@@ -60,6 +75,31 @@ export default async function Dashboard({ searchParams }: { searchParams: { de?:
   const qPendentes = sb.from("empresas").select("id", { count: "exact", head: true }).eq("status", "pendente");
 
   const [periodo, faturar, pendentes, estoque, ultimos] = await Promise.all([qPeriodo, qFaturar, qPendentes, qEstoque, qUltimos]);
+
+  // CRM: tarefas de hoje (atrasadas + hoje), meta do mês e leads sem vendedora.
+  const hoje = hojeSP();
+  const [tarefasHoje, desempenho, aguardando] = await Promise.all([
+    sb
+      .from("atividades")
+      .select("id, descricao, vencimento, concluida, oportunidades(id, titulo), empresas(id, razao_social, nome_fantasia)", { count: "exact" })
+      .eq("tipo", "tarefa")
+      .eq("concluida", false)
+      .eq("responsavel_id", s.userId)
+      .lt("vencimento", inicioDoDiaSeguinte(hoje))
+      .order("vencimento")
+      .limit(6),
+    carregarDesempenho(hoje.slice(0, 7)),
+    gestor
+      ? sb.from("oportunidades").select("id", { count: "exact", head: true }).is("vendedora_id", null).in("etapa", ETAPAS_ABERTAS)
+      : Promise.resolve({ count: 0 }),
+  ]);
+  const listaTarefas = (tarefasHoje.data as unknown as TarefaResumo[] | null) ?? [];
+  const minhaMeta = gestor
+    ? desempenho.linhas.reduce((t, l) => ({ meta: t.meta + l.meta, realizado: t.realizado + l.realizado }), { meta: 0, realizado: 0 })
+    : (desempenho.linhas.find((l) => l.vendedora_id === s.userId) ?? { meta: 0, realizado: 0 });
+  const metaAtingida = atingido(minhaMeta.realizado, minhaMeta.meta);
+  const ritmoMeta = situacaoRitmo(metaAtingida, desempenho.ritmo, minhaMeta.meta);
+  const agora = Date.now();
 
   const pedidosPeriodo = (periodo.data as { total: number }[] | null) ?? [];
   const valorPeriodo = pedidosPeriodo.reduce((s, p) => s + Number(p.total), 0);
@@ -135,6 +175,81 @@ export default async function Dashboard({ searchParams }: { searchParams: { de?:
           detalhe="Zerados ou abaixo do mínimo"
           href={`/gestao/estoque?alertas=1${cd ? `&cd=${cd}` : ""}`}
         />
+      </section>
+
+      <section className={`grid gap-4 ${gestor ? "lg:grid-cols-3" : "lg:grid-cols-2"}`} aria-label="Vendas">
+        <div className="cartao flex flex-col gap-3 p-4">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">Minhas tarefas de hoje</h2>
+            {(tarefasHoje.count ?? 0) > 0 && <span className="chip-alerta">{num(tarefasHoje.count ?? 0)}</span>}
+            <span className="flex-1" />
+            <Link href="/gestao/tarefas" className="text-sm font-semibold text-titan hover:underline">
+              Ver todas
+            </Link>
+          </div>
+          {listaTarefas.length === 0 ? (
+            <p className="text-sm text-suave">Nenhuma tarefa atrasada ou para hoje.</p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-linha">
+              {listaTarefas.map((t) => {
+                const atrasada = Date.parse(t.vencimento) < agora;
+                const link = t.oportunidades
+                  ? { href: `/gestao/oportunidades/${t.oportunidades.id}`, texto: t.oportunidades.titulo }
+                  : t.empresas
+                    ? { href: `/gestao/integradores/${t.empresas.id}`, texto: nomeEmpresa(t.empresas) }
+                    : null;
+                return (
+                  <li key={t.id} className="flex items-start gap-3 py-2 text-sm">
+                    <BotaoConcluir id={t.id} concluida={t.concluida} descricao={t.descricao} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold [overflow-wrap:anywhere]">{t.descricao}</p>
+                      <p className="text-xs text-suave">
+                        <span className={atrasada ? "font-semibold text-red-700" : ""}>
+                          {atrasada ? (diaSP(t.vencimento) === hoje ? `Atrasada (${horaSP(t.vencimento)})` : `Atrasada desde ${data(t.vencimento)}`) : `Hoje, ${horaSP(t.vencimento)}`}
+                        </span>
+                        {link && (
+                          <>
+                            {" · "}
+                            <Link href={link.href} className="text-titan hover:underline">
+                              {link.texto}
+                            </Link>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <Link href="/gestao/metas" className="cartao flex flex-col gap-3 p-4 hover:border-suave">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">{gestor ? "Meta do mês · equipe" : "Minha meta do mês"}</h2>
+            <span className="flex-1" />
+            <span className={ritmoMeta.chip}>{ritmoMeta.rotulo}</span>
+          </div>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-[30px] font-light leading-none">{brl(minhaMeta.realizado)}</span>
+            <span className="text-sm text-suave">de {minhaMeta.meta > 0 ? brl(minhaMeta.meta) : "meta não definida"}</span>
+          </div>
+          <BarraMeta atingido={metaAtingida} ritmo={desempenho.ritmo} rotulo="Meta do mês atingida" />
+          <p className="text-sm text-suave">
+            {minhaMeta.meta > 0 ? `${pct(metaAtingida)} atingido · ritmo esperado ${pct(desempenho.ritmo)}` : "Peça ao gestor para definir a meta do mês."}
+          </p>
+        </Link>
+
+        {gestor && (
+          <Link href="/gestao/funil" className="cartao flex flex-col gap-2 p-4 hover:border-suave">
+            <h2 className="font-semibold">Leads aguardando distribuição</h2>
+            <span className="text-[30px] font-light leading-none">{num(aguardando.count ?? 0)}</span>
+            <span className="text-sm text-suave">
+              {(aguardando.count ?? 0) > 0 ? "Cadastros novos sem vendedora. Distribua pelo funil." : "Nenhum lead esperando. Tudo distribuído."}
+            </span>
+            <span className="mt-auto text-sm font-semibold text-titan">Abrir funil →</span>
+          </Link>
+        )}
       </section>
 
       <section className="flex flex-col gap-3" aria-labelledby="ultimos">

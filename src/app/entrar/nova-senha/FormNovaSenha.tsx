@@ -3,7 +3,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabaseNavegador } from "@/lib/supabase/client";
 
-export function FormNovaSenha() {
+/** aposSalvar: destino mantendo a sessão (integrador convidado); sem ele, sai e volta ao login. */
+export function FormNovaSenha({ aposSalvar = null }: { aposSalvar?: string | null }) {
   const router = useRouter();
   const [senha, setSenha] = useState("");
   const [repetir, setRepetir] = useState("");
@@ -21,6 +22,11 @@ export function FormNovaSenha() {
     if (error) {
       setEnviando(false);
       setErro(/different from the old/i.test(error.message) ? "A nova senha precisa ser diferente da anterior." : "Não foi possível salvar a senha. Peça um novo link e tente de novo.");
+      return;
+    }
+    if (aposSalvar) {
+      router.replace(aposSalvar);
+      router.refresh();
       return;
     }
     await sb.auth.signOut();

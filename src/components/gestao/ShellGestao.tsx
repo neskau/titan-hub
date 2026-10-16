@@ -4,8 +4,13 @@ import { Shell, type ItemMenu } from "@/components/Shell";
 
 const MENU_BASE: ItemMenu[] = [
   { href: "/gestao", rotulo: "Dashboard" },
-  { href: "/gestao/pedidos", rotulo: "Pedidos" },
-  { href: "/gestao/integradores", rotulo: "Integradores", grupo: "Gestão" },
+  { href: "/gestao/funil", rotulo: "Funil de vendas", grupo: "Vendas" },
+  { href: "/gestao/tarefas", rotulo: "Tarefas", grupo: "Vendas" },
+  { href: "/gestao/integradores", rotulo: "Integradores", grupo: "Vendas" },
+  { href: "/gestao/pedidos", rotulo: "Pedidos", grupo: "Vendas" },
+  { href: "/gestao/metas", rotulo: "Metas", grupo: "Vendas" },
+  { href: "/gestao/ferramentas/payback", rotulo: "Simulador de payback", grupo: "Ferramentas" },
+  { href: "/gestao/ferramentas/incidencia", rotulo: "Incidência solar", grupo: "Ferramentas" },
   { href: "/gestao/estoque", rotulo: "Estoque por CD", grupo: "Gestão" },
   { href: "/gestao/produtos", rotulo: "Produtos e datasheets", grupo: "Gestão" },
 ];

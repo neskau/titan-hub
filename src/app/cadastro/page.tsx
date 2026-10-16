@@ -19,6 +19,9 @@ export default async function Cadastro() {
           <h1 className="text-[26px] font-light leading-tight">Crie seu acesso</h1>
           <p className="text-sm text-suave">Depois você informa o CNPJ da empresa integradora. Nossa equipe aprova o cadastro e libera preços e compras.</p>
         </div>
+        <p role="note" className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+          É da equipe Titan? Crie só a conta e não cadastre empresa; o gestor libera seu acesso.
+        </p>
         <FormConta />
         <p className="text-center text-sm text-suave">
           Já tem conta?{" "}

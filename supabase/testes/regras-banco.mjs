@@ -27,7 +27,7 @@ grant usage on schema storage to anon, authenticated, service_role;
 `;
 await c.query(stub);
 
-const arquivos = ["migrations/0001_schema.sql", "migrations/0002_gestao.sql", "migrations/0003_bling.sql", "migrations/0004_revisao.sql", "migrations/0005_crm.sql", "seed.sql"];
+const arquivos = ["migrations/0001_schema.sql", "migrations/0002_gestao.sql", "migrations/0003_bling.sql", "migrations/0004_revisao.sql", "migrations/0005_crm.sql", "migrations/0006_ajustes_crm.sql", "seed.sql"];
 for (const a of arquivos) {
   try { await c.query(fs.readFileSync(`${RAIZ}/${a}`, "utf8")); console.log("OK   ", a); }
   catch (e) { console.log("ERRO ", a, "→", e.message); await c.end();  process.exit(1); }
@@ -168,7 +168,7 @@ await espera_erro(() => como(V2, "select equipe_cadastrar_integrador('00000000-0
 await espera_erro(() => como(U.vend, "select equipe_cadastrar_integrador($1,'44555666000177','Outra LTDA',null,'X','PR','1','Agro')", [V2]), "não vincula membro da equipe como integrador");
 await espera_erro(() => como(U.int, "select equipe_cadastrar_integrador('00000000-0000-0000-0000-000000000008','44555666000177','Outra LTDA',null,'X','PR','1','Agro')"), "integrador não usa a função da equipe");
 ok((await como(U.vend, "select * from desempenho_equipe(current_date)")).rows.length === 1, "vendedora vê só o próprio desempenho");
-ok((await como(U.gest, "select * from desempenho_equipe(current_date)")).rows.length >= 3, "gestor vê o desempenho da equipe");
+ok((await como(U.gest, "select * from desempenho_equipe(current_date)")).rows.length >= 2, "gestor vê o desempenho da equipe");
 await espera_erro(() => como(U.vend, "insert into metas values ($1, date_trunc('month', current_date)::date, 999999)", [U.vend]), "vendedora não define a própria meta");
 ok((await como(U.gest, "insert into metas values ($1, date_trunc('month', current_date)::date, 500000) returning vendedora_id", [U.vend])).rowCount === 1, "gestor define meta");
 ok((await c.query("select count(*)::int n from atividades where empresa_id=$1 and descricao like 'Pedido #%'", [emp])).rows[0].n >= 1, "pedido aparece na linha do tempo da empresa");

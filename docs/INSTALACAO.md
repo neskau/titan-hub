@@ -66,6 +66,15 @@ O endereço `app.titandistribuidora.com.br` hoje aponta para a plataforma do par
 
 Siga `docs/BLING.md`: criar o aplicativo no Bling, colar as duas chaves na Vercel, clicar em **Conectar** e ligar cada depósito do Bling ao CD certo.
 
+## E-mails de convite
+
+Quando uma vendedora cadastra um integrador em **Gestão > Integradores > Novo integrador**, o sistema cria a conta e o Supabase envia um e-mail de convite para a pessoa criar a senha.
+
+- Em **Authentication > Email Templates > Invite user**, o modelo padrão já funciona: o link `{{ .ConfirmationURL }}` leva para `/entrar/confirmar`, que confirma o acesso e abre a tela de criar senha. Pode traduzir o texto do e-mail à vontade, mas mantenha esse link.
+- A Redirect URL `https://SEU-ENDERECO/entrar/confirmar` precisa estar cadastrada em **Authentication > URL Configuration** (passo 1.4). Se o convite chegar com erro de endereço, cadastre também `https://SEU-ENDERECO/entrar/confirmar**` (com os dois asteriscos).
+- A variável `SUPABASE_SERVICE_ROLE_KEY` precisa estar na Vercel: sem ela a tela de cadastro avisa que o convite não está configurado.
+- O envio de e-mails padrão do Supabase tem limite baixo por hora. Para uso diário, configure um SMTP próprio em **Project Settings > Authentication > SMTP Settings**.
+
 ## 6. Conferência final
 
 - [ ] Visitante abre `/catalogo` e vê produtos **sem preço**.

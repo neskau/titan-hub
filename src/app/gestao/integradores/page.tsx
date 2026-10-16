@@ -42,6 +42,11 @@ export default async function Integradores({ searchParams }: { searchParams: { s
       <CabecalhoPagina
         titulo="Integradores"
         sub={pendentes > 0 ? `${pendentes} cadastro(s) aguardando aprovação` : "Empresas cadastradas no portal"}
+        acoes={
+          <Link href="/gestao/integradores/novo" className="btn-primario">
+            Novo integrador
+          </Link>
+        }
       />
 
       <form method="get" className="cartao grid gap-3 p-4 sm:grid-cols-[1fr_170px_210px_auto] sm:items-end" aria-label="Filtros de integradores">

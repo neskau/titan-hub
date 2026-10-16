@@ -8,6 +8,23 @@ import { ehUuid, listarCdsGestao, sessaoGestao } from "@/components/gestao/servi
 import { brl, formatarCnpj, linkWhatsapp } from "@/lib/formato";
 import { supabaseServidor } from "@/lib/supabase/server";
 import type { Empresa, Pedido, Perfil } from "@/lib/tipos";
+import { etapaInfo, type Etapa } from "@/components/gestao/crm/constantes";
+import { FormAtividade } from "@/components/gestao/crm/FormAtividade";
+import { LinhaDoTempoCrm } from "@/components/gestao/crm/LinhaDoTempoCrm";
+import { ehGestor, listarEquipe } from "@/components/gestao/crm/servidor";
+import type { Atividade } from "@/components/gestao/crm/tipos";
+import { AvisoCadastro } from "@/components/gestao/cadastro/AvisoCadastro";
+import { AdicionarUsuario } from "@/components/gestao/cadastro/AdicionarUsuario";
+
+interface OportunidadeEmpresa {
+  id: string;
+  titulo: string;
+  etapa: Etapa;
+  valor_estimado: number | null;
+  kwp: number | null;
+  vendedora_id: string | null;
+  criado_em: string;
+}
 
 export const metadata = { title: "Integrador · Gestão · Titan" };
 
@@ -18,7 +35,13 @@ const telefone = (t: string) => {
   return t;
 };
 
-export default async function DetalheIntegrador({ params }: { params: { id: string } }) {
+export default async function DetalheIntegrador({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { convite?: string; vinculado?: string };
+}) {
   const s = await sessaoGestao();
   if (!ehUuid(params.id)) notFound();
   const sb = supabaseServidor();
@@ -49,6 +72,28 @@ export default async function DetalheIntegrador({ params }: { params: { id: stri
   const nomeCd = (id: string) => cds.find((c) => c.id === id)?.nome ?? id;
   const podeBloquear = s.perfil.papel === "gestor" || s.perfil.papel === "admin";
 
+  // CRM: oportunidades da empresa e linha do tempo (atividades da empresa + das oportunidades dela).
+  const [{ data: ops }, equipeCrm] = await Promise.all([
+    sb
+      .from("oportunidades")
+      .select("id, titulo, etapa, valor_estimado, kwp, vendedora_id, criado_em")
+      .eq("empresa_id", e.id)
+      .order("criado_em", { ascending: false })
+      .limit(100),
+    listarEquipe(),
+  ]);
+  const oportunidades = (ops as OportunidadeEmpresa[] | null) ?? [];
+  const idsOport = oportunidades.map((o) => o.id);
+  const { data: ativ } = await sb
+    .from("atividades")
+    .select("*")
+    .or(`empresa_id.eq.${e.id}${idsOport.length ? `,oportunidade_id.in.(${idsOport.join(",")})` : ""}`)
+    .order("criado_em", { ascending: false })
+    .limit(300);
+  const atividades = (ativ as Atividade[] | null) ?? [];
+  const titulosOport = Object.fromEntries(oportunidades.map((o) => [o.id, o.titulo]));
+  const nomeMembro = (id: string | null) => equipeCrm.find((m) => m.id === id)?.nome ?? "Sem vendedora";
+
   return (
     <>
       <Link href="/gestao/integradores" className="text-sm font-semibold text-titan hover:underline">
@@ -59,6 +104,7 @@ export default async function DetalheIntegrador({ params }: { params: { id: stri
         sub={`CNPJ ${formatarCnpj(e.cnpj)} · cadastrada em ${data(e.criado_em)}`}
         acoes={<span className={STATUS_EMPRESA[e.status].chip}>{STATUS_EMPRESA[e.status].rotulo}</span>}
       />
+      <AvisoCadastro params={searchParams} />
 
       <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
         <div className="flex min-w-0 flex-col gap-5">
@@ -90,9 +136,13 @@ export default async function DetalheIntegrador({ params }: { params: { id: stri
           </dl>
 
           <section className="flex flex-col gap-2" aria-labelledby="usuarios">
-            <h2 id="usuarios" className="text-lg font-semibold">
-              Usuários vinculados
-            </h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 id="usuarios" className="text-lg font-semibold">
+                Usuários vinculados
+              </h2>
+              <span className="flex-1" />
+              <AdicionarUsuario empresaId={e.id} cnpj={e.cnpj} />
+            </div>
             {usuariosLista.length === 0 ? (
               <p className="cartao p-4 text-sm text-suave">Nenhum usuário vinculado.</p>
             ) : (
@@ -165,6 +215,65 @@ export default async function DetalheIntegrador({ params }: { params: { id: stri
                 </table>
               </div>
             )}
+          </section>
+
+          <section className="flex flex-col gap-2" aria-labelledby="oportunidades">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 id="oportunidades" className="text-lg font-semibold">
+                Oportunidades
+              </h2>
+              <span className="flex-1" />
+              <Link href={`/gestao/funil/nova?empresa=${e.id}`} className="btn-primario py-1.5 text-sm">
+                + Nova oportunidade
+              </Link>
+            </div>
+            {oportunidades.length === 0 ? (
+              <p className="cartao p-4 text-sm text-suave">Nenhuma oportunidade com esta empresa.</p>
+            ) : (
+              <div className="cartao overflow-x-auto">
+                <table className="tabela w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr>
+                      <th>Oportunidade</th>
+                      <th>Etapa</th>
+                      <th>Vendedora</th>
+                      <th>Criada em</th>
+                      <th className="text-right">Valor estimado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {oportunidades.map((o) => (
+                      <tr key={o.id} className="hover:bg-fundo">
+                        <td>
+                          <Link href={`/gestao/oportunidades/${o.id}`} className="font-semibold text-titan hover:underline">
+                            {o.titulo}
+                          </Link>
+                        </td>
+                        <td>
+                          <span className={etapaInfo(o.etapa).chip}>{etapaInfo(o.etapa).rotulo}</span>
+                        </td>
+                        <td>{nomeMembro(o.vendedora_id)}</td>
+                        <td>{data(o.criado_em)}</td>
+                        <td className="text-right font-semibold">{brl(o.valor_estimado != null ? Number(o.valor_estimado) : null)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="flex flex-col gap-2" aria-labelledby="linha-do-tempo">
+            <h2 id="linha-do-tempo" className="text-lg font-semibold">
+              Linha do tempo
+            </h2>
+            <FormAtividade
+              empresaId={e.id}
+              eu={s.userId}
+              gestor={ehGestor(s)}
+              equipe={equipeCrm.filter((m) => m.ativo).map(({ id, nome }) => ({ id, nome }))}
+            />
+            <LinhaDoTempoCrm atividades={atividades} equipe={equipeCrm} oportunidades={titulosOport} agora={Date.now()} />
           </section>
         </div>
 
